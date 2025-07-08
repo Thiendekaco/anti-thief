@@ -26,8 +26,8 @@ bool mpuSleepState = false;     // Trạng thái sleep của MPU6050
 
 // Khởi tạo bộ lọc Kalman
 // Tham số: độ không chắc chắn đo lường, độ không chắc chắn ước lượng, nhiễu quá trình
-SimpleKalmanFilter gpsKalmanLat(0.1, 1.0, 0.01);
-SimpleKalmanFilter gpsKalmanLng(0.1, 1.0, 0.01);
+SimpleKalmanFilter gpsKalmanLat(5.0, 1.0, 0.01);
+SimpleKalmanFilter gpsKalmanLng(5.0, 1.0, 0.01);
 SimpleKalmanFilter mpuKalmanX(0.5, 1.0, 0.05);
 SimpleKalmanFilter mpuKalmanY(0.5, 1.0, 0.05);
 SimpleKalmanFilter mpuKalmanZ(0.5, 1.0, 0.05);
@@ -210,9 +210,7 @@ void restoreFromSleep();
 void updateActivityTime();
 
 // Existing function prototypes
-void wakeGPSFromSleep();
 void updateGpsPosition();
-void putGPSToSleep();
 void updateBlynkData();
 void setup4GConnection();
 void acknowledgeUserPresence();
@@ -221,7 +219,6 @@ void deactivateRF();
 void disableRF433();
 void activateSim();
 void deactivateSim();
-void wakeSimFromSleep();
 bool checkSimResponse();
 void activateGPS();
 void deactivateGPS();
@@ -686,12 +683,12 @@ bool checkSimResponse() {
 void resetGpsModule() {
     Serial.println("Thực hiện reset module GPS...");
 
-    // Tắt GPS bằng cách đặt vào chế độ ngủ
-    putGPSToSleep();
+    // Tắt GPS bằng cách cắt nguồn
+    powerOffGPS();
     delay(1000);
 
-    // Đánh thức GPS
-    wakeGPSFromSleep();
+    // Bật lại GPS
+    powerOnGPS();
 
     gpsResetCount++;
     Serial.print("Đã reset GPS, số lần reset: ");
@@ -765,9 +762,10 @@ void prepareForSleep() {
     // Ghi lại thời điểm vào sleep
     lastSleepTime = millis();
 
-    // Đặt GPS vào chế độ ngủ
+    // Tắt GPS nếu đang hoạt động
     if (gpsActive) {
-        putGPSToSleep();
+        powerOffGPS();
+        gpsActive = false;
     }
 
     // Đặt MPU vào chế độ ngủ
@@ -971,33 +969,6 @@ void disableRF433() {
     updateActivityTime(); // Cập nhật thời gian hoạt động
 }
 
-// Đặt GPS vào chế độ ngủ - ATGM336H
-void putGPSToSleep() {
-    Serial.println("Đặt ATGM336H vào chế độ ngủ");
-
-    // Gửi lệnh PMTK để đặt ATGM336H vào chế độ ngủ
-    SerialGPS.print(GPS_SLEEP_CMD);
-
-    Serial.println("ATGM336H đã vào chế độ ngủ");
-}
-
-// Đánh thức GPS từ chế độ ngủ - ATGM336H
-void wakeGPSFromSleep() {
-    Serial.println("Đánh thức ATGM336H từ chế độ ngủ");
-
-    // ATGM336H có thể được đánh thức bằng bất kỳ byte nào hoặc lệnh hot start
-    SerialGPS.print(GPS_WAKE_CMD);
-
-    // Giảm thời gian đợi vì hot start rất nhanh
-    delay(800);  // Đợi GPS khởi động - giảm xuống còn 800ms
-
-    Serial.println("ATGM336H đã được đánh thức");
-    updateActivityTime(); // Cập nhật thời gian hoạt động
-
-    // Cập nhật thời gian phản hồi GPS
-    lastGpsResponse = millis();
-    gpsResponding = true;
-}
 // Điều khiển nguồn GPS
 void powerOnGPS() {
         digitalWrite(GPS_POWER_PIN, HIGH);
@@ -1050,8 +1021,8 @@ void updateGpsPosition() {
                 signalLost = false;
 
                 // Khởi tạo lại bộ lọc Kalman với vị trí đầu tiên
-                gpsKalmanLat = SimpleKalmanFilter(0.1, 1.0, 0.01);
-                gpsKalmanLng = SimpleKalmanFilter(0.1, 1.0, 0.01);
+                gpsKalmanLat = SimpleKalmanFilter(5.0, 1.0, 0.01);
+                gpsKalmanLng = SimpleKalmanFilter(5.0, 1.0, 0.01);
                 gpsKalmanLat.updateEstimate(rawLat);
                 gpsKalmanLng.updateEstimate(rawLng);
                 // Luôn log khi có sự kiện quan trọng
@@ -1141,23 +1112,12 @@ void deactivateSim() {
     }
 }
 
-// Đánh thức SIM từ chế độ ngủ
-void wakeSimFromSleep() {
-    if (simActive && !simPowerState) {
-        powerOnSIM();
-        delay(500);
-        if (simActive && !simPowerState) {
-            powerOnSIM();
-        }
-    }
-}
 // Kích hoạt module GPS ATGM336H - Chỉ đánh thức từ chế độ ngủ
 void activateGPS() {
     if (!gpsActive) {
         Serial.println("Kích hoạt module GPS ATGM336H");
 
         powerOnGPS();
-        wakeGPSFromSleep();
 
         gpsActive = true;
         gpsActivationTime = millis();  // Ghi lại thời điểm bắt đầu kích hoạt
@@ -1188,12 +1148,10 @@ void activateGPS() {
     }
 }
 
-// Tắt GPS ATGM336H - Chỉ đặt vào chế độ ngủ, không cắt nguồn
+// Tắt GPS ATGM336H - chỉ cắt nguồn
 void deactivateGPS() {
     if (gpsActive && alarmStage == STAGE_NONE && !networkModeActive) {
         Serial.println("Tắt nguồn GPS ATGM336H");
-
-        putGPSToSleep();
         powerOffGPS();
         gpsActive = false;
         gpsActivationTime = 0;
@@ -1263,8 +1221,8 @@ void sendSmsAlert(const char* message) {
         activateSim();
         delay(1000);
     } else if (!checkSimResponse()) {
-        // Nếu SIM đang ở chế độ ngủ, đánh thức nó
-        wakeSimFromSleep();
+        // Bật lại nguồn SIM nếu cần
+        powerOnSIM();
         delay(1000);
     }
 
@@ -1405,8 +1363,8 @@ void setup4GConnection() {
     // Gửi AT commands để thiết lập kết nối 4G cho A7682S
     Serial.println("Thiết lập kết nối 4G với A7682S...");
 
-    // Kiểm tra nếu module đang ở chế độ ngủ
-    wakeSimFromSleep();
+    // Bật nguồn SIM để thiết lập kết nối
+    powerOnSIM();
     delay(1000);
 
     // Đảm bảo module đã sẵn sàng
@@ -1573,10 +1531,10 @@ void deactivateNetworkMode() {
             SerialSIM.println("AT+CGACT=0,1");
             delay(1000);
 
-            // Đặt SIM vào chế độ ngủ nếu không cần thiết
+            // Tắt SIM nếu không cần thiết
             if (alarmStage == STAGE_NONE) {
-                // Sử dụng chế độ ngủ thay vì tắt hoàn toàn
-                SerialSIM.println("AT+CSCLK=1");
+                powerOffSIM();
+                simActive = false;
                 delay(500);
             }
 
@@ -2332,8 +2290,8 @@ void handleInitialBeeps() {
 
     // Kiểm tra GPS
     Serial.print("- GPS ATGM336H: ");
-    // GPS luôn được cấp nguồn, đánh thức từ chế độ ngủ
-    wakeGPSFromSleep();
+    // Bật nguồn GPS để kiểm tra
+    powerOnGPS();
 
     unsigned long gpsStartTime = millis();
     bool gpsResponded = false;
@@ -2348,8 +2306,6 @@ void handleInitialBeeps() {
 
     if (gpsResponded) {
         Serial.println("OK");
-        // Đặt lại vào chế độ ngủ
-        putGPSToSleep();
 
         // Cập nhật thời gian phản hồi GPS
         lastGpsResponse = millis();
@@ -2380,11 +2336,11 @@ void handleInitialBeeps() {
     }
 
     // Khởi tạo bộ lọc Kalman
-    mpuKalmanX = SimpleKalmanFilter(0.5, 1.0, 0.05);
-    mpuKalmanY = SimpleKalmanFilter(0.5, 1.0, 0.05);
-    mpuKalmanZ = SimpleKalmanFilter(0.5, 1.0, 0.05);
-    gpsKalmanLat = SimpleKalmanFilter(0.1, 1.0, 0.01);
-    gpsKalmanLng = SimpleKalmanFilter(0.1, 1.0, 0.01);
+    mpuKalmanX = SimpleKalmanFilter(0.5, 0.5, 0.01);
+    mpuKalmanY = SimpleKalmanFilter(0.5, 0.5, 0.01);
+    mpuKalmanZ = SimpleKalmanFilter(0.5, 0.5, 0.01);
+    gpsKalmanLat = SimpleKalmanFilter(5.0, 1.0, 0.01);
+    gpsKalmanLng = SimpleKalmanFilter(5.0, 1.0, 0.01);
 
     updateActivityTime(); // Cập nhật thời gian hoạt động
 }
@@ -2549,11 +2505,12 @@ void setup() {
         wifiConnected = false;
 
         // Khởi tạo bộ lọc Kalman - chuẩn bị sẵn sàng
-        mpuKalmanX = SimpleKalmanFilter(0.5, 1.0, 0.05);
-        mpuKalmanY = SimpleKalmanFilter(0.5, 1.0, 0.05);
-        mpuKalmanZ = SimpleKalmanFilter(0.5, 1.0, 0.05);
-        gpsKalmanLat = SimpleKalmanFilter(0.1, 1.0, 0.01);
-        gpsKalmanLng = SimpleKalmanFilter(0.1, 1.0, 0.01);
+        mpuKalmanX = SimpleKalmanFilter(0.5, 0.5, 0.01);
+        mpuKalmanY = SimpleKalmanFilter(0.5, 0.5, 0.01);
+        mpuKalmanZ = SimpleKalmanFilter(0.5, 0.5, 0.01);
+        gpsKalmanLat = SimpleKalmanFilter(5.0, 1.0, 0.01);
+        gpsKalmanLng = SimpleKalmanFilter(5.0, 1.0, 0.01);
+
 
         Serial.println("Hệ thống đã sẵn sàng và đang chờ tín hiệu...");
     }

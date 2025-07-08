@@ -51,10 +51,6 @@
 #define ACCEL_THRESHOLD 1.0        // Ngưỡng gia tốc để phát hiện chuyển động (m/s²)
 #define DISTANCE_THRESHOLD 10.0    // Ngưỡng khoảng cách để phát hiện di chuyển (mét)
 
-// AT commands cho GPS
-#define GPS_SLEEP_CMD "$PMTK161,0*28\r\n"  // Command đặt GPS vào chế độ ngủ
-#define GPS_WAKE_CMD "$PMTK101*32\r\n"     // Command hot start để đánh thức GPS
-
 // Thông tin Blynk và WiFi
 #define BLYNK_AUTH_TOKEN "_SBxmQ0A765Sob-8a3H-lCX7nT2yzriY"
 #define BLYNK_SERVER "blynk.dke.vn"
