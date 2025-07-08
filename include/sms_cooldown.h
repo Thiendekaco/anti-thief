@@ -24,6 +24,14 @@ const unsigned long SMS_COOLDOWN[] = {
 // Thời gian gửi SMS cuối cùng cho mỗi loại
 unsigned long lastSMSSentTime[7] = {0, 0, 0, 0, 0, 0, 0};
 
+// Khởi tạo giá trị cooldown để có thể gửi SMS ngay sau khi khởi động
+inline void initSMSCooldown() {
+    unsigned long currentTime = millis();
+    for (int i = 0; i < 7; ++i) {
+        // Đặt thời gian gửi cuối cùng đủ xa để không bị cooldown ban đầu
+        lastSMSSentTime[i] = currentTime - SMS_COOLDOWN[i];
+    }
+}
 // Kiểm tra và cập nhật cooldown, trả về true nếu có thể gửi SMS
 bool checkSMSCooldown(SMSAlertType alertType) {
     unsigned long currentTime = millis();

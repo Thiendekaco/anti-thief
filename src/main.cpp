@@ -1144,9 +1144,9 @@ void wakeSimFromSleep() {
         delay(500);
         if (simActive && !simPowerState) {
             powerOnSIM();
+        }
     }
 }
-
 // Kích hoạt module GPS ATGM336H - Chỉ đánh thức từ chế độ ngủ
 void activateGPS() {
     if (!gpsActive) {
@@ -2436,6 +2436,9 @@ void setup() {
 
     SerialGPS.begin(9600, SERIAL_8N1, 16, 17);  // RX, TX cho GPS
     SerialSIM.begin(115200, SERIAL_8N1, 27, 26); // RX, TX cho SIM A7682S
+
+    // Khởi tạo giá trị cooldown SMS để không bị chặn ngay sau khi khởi động
+    initSMSCooldown();
 
     // Đặt chế độ cho các chân
     pinMode(BUZZER_PIN, OUTPUT);
