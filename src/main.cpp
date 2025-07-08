@@ -35,7 +35,7 @@
 #include "config.h"
 #include "esp_sleep.h"       // Thư viện ESP sleep
 #include "esp_task_wdt.h"    // Thư viện Watchdog Timer
-#include "kalman_filters.h"  // Thư viện bộ lọc Kalman (mới thêm)
+#include <SimpleKalmanFilter.h>  // Thư viện SimpleKalmanFilter
 
 // QUAN TRỌNG: Ghi đè định nghĩa LED_PIN để vô hiệu hóa
 #undef LED_PIN
@@ -50,8 +50,11 @@ bool mpuSleepState = false;     // Trạng thái sleep của MPU6050
 
 // Khởi tạo bộ lọc Kalman
 // Tham số: độ không chắc chắn đo lường, độ không chắc chắn ước lượng, nhiễu quá trình
-GPSKalmanFilter gpsKalman(0.1, 1.0, 0.01);
-MPUKalmanFilter mpuKalman(0.5, 1.0, 0.05);
+SimpleKalmanFilter gpsKalmanLat(0.1, 1.0, 0.01);
+SimpleKalmanFilter gpsKalmanLng(0.1, 1.0, 0.01);
+SimpleKalmanFilter mpuKalmanX(0.5, 1.0, 0.05);
+SimpleKalmanFilter mpuKalmanY(0.5, 1.0, 0.05);
+SimpleKalmanFilter mpuKalmanZ(0.5, 1.0, 0.05);
 
 // Forward declaration of functions used in other files
 void sendSmsAlert(const char* message);
@@ -1045,8 +1048,8 @@ void updateGpsPosition() {
             float rawLng = gps.location.lng();
 
             // Áp dụng bộ lọc Kalman
-            float filteredLat, filteredLng;
-            gpsKalman.updatePosition(rawLat, rawLng, &filteredLat, &filteredLng);
+            float filteredLat = gpsKalmanLat.updateEstimate(rawLat);
+            float filteredLng = gpsKalmanLng.updateEstimate(rawLng);
 
             // Cập nhật vị trí đã lọc
             currentLat = filteredLat;
@@ -1058,8 +1061,10 @@ void updateGpsPosition() {
                 signalLost = false;
 
                 // Khởi tạo lại bộ lọc Kalman với vị trí đầu tiên
-                gpsKalman.reset(rawLat, rawLng);
-
+                gpsKalmanLat = SimpleKalmanFilter(0.1, 1.0, 0.01);
+                gpsKalmanLng = SimpleKalmanFilter(0.1, 1.0, 0.01);
+                gpsKalmanLat.updateEstimate(rawLat);
+                gpsKalmanLng.updateEstimate(rawLng);
                 // Luôn log khi có sự kiện quan trọng
                 Serial.println("Đã nhận được tín hiệu GPS hợp lệ lần đầu tiên");
             } else if (signalLost) {
@@ -1715,8 +1720,9 @@ bool isStrongMotion() {
     float accel_z = a.acceleration.z;
 
     // Áp dụng bộ lọc Kalman
-    float filtered_x, filtered_y, filtered_z;
-    mpuKalman.updateAcceleration(accel_x, accel_y, accel_z, &filtered_x, &filtered_y, &filtered_z);
+    float filtered_x = mpuKalmanX.updateEstimate(accel_x);
+    float filtered_y = mpuKalmanY.updateEstimate(accel_y);
+    float filtered_z = mpuKalmanZ.updateEstimate(accel_z);
 
     // Tính độ lớn gia tốc đã lọc
     float filteredAccelMagnitude = sqrt(filtered_x * filtered_x +
@@ -1778,8 +1784,9 @@ void handleMotionDetection() {
     float accel_z = a.acceleration.z;
 
     // Áp dụng bộ lọc Kalman
-    float filtered_x, filtered_y, filtered_z;
-    mpuKalman.updateAcceleration(accel_x, accel_y, accel_z, &filtered_x, &filtered_y, &filtered_z);
+    float filtered_x = mpuKalmanX.updateEstimate(accel_x);
+    float filtered_y = mpuKalmanY.updateEstimate(accel_y);
+    float filtered_z = mpuKalmanZ.updateEstimate(accel_z);
 
     // Tính toán độ lớn của vector gia tốc đã lọc
     float filteredAccelMagnitude = sqrt(filtered_x * filtered_x +
@@ -2369,8 +2376,11 @@ void handleInitialBeeps() {
     }
 
     // Khởi tạo bộ lọc Kalman
-    mpuKalman.reset();
-    gpsKalman.reset(0, 0);
+    mpuKalmanX = SimpleKalmanFilter(0.5, 1.0, 0.05);
+    mpuKalmanY = SimpleKalmanFilter(0.5, 1.0, 0.05);
+    mpuKalmanZ = SimpleKalmanFilter(0.5, 1.0, 0.05);
+    gpsKalmanLat = SimpleKalmanFilter(0.1, 1.0, 0.01);
+    gpsKalmanLng = SimpleKalmanFilter(0.1, 1.0, 0.01);
 
     updateActivityTime(); // Cập nhật thời gian hoạt động
 }
@@ -2530,8 +2540,11 @@ void setup() {
         wifiConnected = false;
 
         // Khởi tạo bộ lọc Kalman - chuẩn bị sẵn sàng
-        mpuKalman.reset();
-        gpsKalman.reset(0, 0);
+        mpuKalmanX = SimpleKalmanFilter(0.5, 1.0, 0.05);
+        mpuKalmanY = SimpleKalmanFilter(0.5, 1.0, 0.05);
+        mpuKalmanZ = SimpleKalmanFilter(0.5, 1.0, 0.05);
+        gpsKalmanLat = SimpleKalmanFilter(0.1, 1.0, 0.01);
+        gpsKalmanLng = SimpleKalmanFilter(0.1, 1.0, 0.01);
 
         Serial.println("Hệ thống đã sẵn sàng và đang chờ tín hiệu...");
     }
