@@ -1,10 +1,3 @@
-/**
- * Hệ thống quản lý nguồn MPU6050
- *
- * Cập nhật lần cuối: 2025-06-18 17:43:54
- * Người phát triển: nguongthienTieu
- */
-
 #ifndef MPU_POWER_MANAGEMENT_H
 #define MPU_POWER_MANAGEMENT_H
 

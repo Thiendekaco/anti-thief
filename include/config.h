@@ -1,10 +1,3 @@
-/**
- * Cấu hình cho hệ thống Theo dõi và Chống trộm Xe ESP32
- *
- * Cập nhật lần cuối: 2025-06-18 17:53:40
- * Người phát triển: nguongthienTieu
- */
-
 #ifndef CONFIG_H
 #define CONFIG_H
 

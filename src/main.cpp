@@ -131,8 +131,9 @@ unsigned long networkActivationTime = 0;  // Thời điểm kích hoạt mạng
 bool usingSIM = false;                   // Đang sử dụng kết nối SIM
 
 // Biến cho trạng thái báo động
-AlarmStage alarmStage = STAGE_NONE;
-AlarmStage previousAlarmStage = STAGE_NONE;
+// Bắt đầu ở trạng thái cảnh báo để phát hiện chuyển động
+AlarmStage alarmStage = STAGE_WARNING;
+AlarmStage previousAlarmStage = STAGE_WARNING;
 unsigned long lastBeepTime = 0;
 bool notificationSent = false;
 bool initialPositionSet = false;

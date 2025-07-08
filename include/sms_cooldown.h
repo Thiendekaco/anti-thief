@@ -1,10 +1,3 @@
-/**
- * Hệ thống quản lý cooldown cho SMS
- *
- * Cập nhật lần cuối: 2025-06-18 17:43:54
- * Người phát triển: nguongthienTieu
- */
-
 #ifndef SMS_COOLDOWN_H
 #define SMS_COOLDOWN_H
 
