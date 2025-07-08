@@ -44,6 +44,7 @@
 #define GPS_STAGE2_INTERVAL 30000  // Cập nhật GPS mỗi 30 giây trong giai đoạn 2
 #define WARNING_INACTIVITY_TIMEOUT 120000 // Thời gian không hoạt động để thoát giai đoạn 1 (2 phút)
 #define STAGE2_TIMEOUT 60000       // Thời gian tối đa cho giai đoạn 2 (1 phút)
+#define STARTUP_GPS_TIMEOUT 30000
 #define STAGE2_MAX_CHECKS 3        // Số lần kiểm tra tối đa trong giai đoạn 2
 // Thời gian bỏ qua phát hiện chuyển động sau khi khởi động hoặc thức dậy (ms)
 #define MOTION_WARMUP_DURATION 5000

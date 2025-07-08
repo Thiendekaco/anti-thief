@@ -26,11 +26,11 @@ bool mpuSleepState = false;     // Trạng thái sleep của MPU6050
 
 // Khởi tạo bộ lọc Kalman
 // Tham số: độ không chắc chắn đo lường, độ không chắc chắn ước lượng, nhiễu quá trình
-SimpleKalmanFilter gpsKalmanLat(5.0, 1.0, 0.01);
-SimpleKalmanFilter gpsKalmanLng(5.0, 1.0, 0.01);
-SimpleKalmanFilter mpuKalmanX(0.5, 1.0, 0.05);
-SimpleKalmanFilter mpuKalmanY(0.5, 1.0, 0.05);
-SimpleKalmanFilter mpuKalmanZ(0.5, 1.0, 0.05);
+SimpleKalmanFilter gpsKalmanLat(5.0, 0.5, 0.01);
+SimpleKalmanFilter gpsKalmanLng(5.0, 0.5, 0.01);
+SimpleKalmanFilter mpuKalmanX(0.5, 0.5, 0.05);
+SimpleKalmanFilter mpuKalmanY(0.5, 0.5, 0.05);
+SimpleKalmanFilter mpuKalmanZ(0.5, 0.5, 0.05);
 
 // Forward declaration of functions used in other files
 void sendSmsAlert(const char* message);
@@ -1021,8 +1021,8 @@ void updateGpsPosition() {
                 signalLost = false;
 
                 // Khởi tạo lại bộ lọc Kalman với vị trí đầu tiên
-                gpsKalmanLat = SimpleKalmanFilter(5.0, 1.0, 0.01);
-                gpsKalmanLng = SimpleKalmanFilter(5.0, 1.0, 0.01);
+                gpsKalmanLat = SimpleKalmanFilter(5.0, 0.5, 0.01);
+                gpsKalmanLng = SimpleKalmanFilter(5.0, 0.5, 0.01);
                 gpsKalmanLat.updateEstimate(rawLat);
                 gpsKalmanLng.updateEstimate(rawLng);
                 // Luôn log khi có sự kiện quan trọng
@@ -1259,7 +1259,7 @@ float getBatteryVoltage() {
     float vOut = adcValue * (3.3 / 4095.0);
 
     // Tính toán điện áp pin thực tế với mạch chia áp R1=20k, R2=100k
-    float voltage = vOut * 6.0;  // Vin = Vout * (R1+R2)/R1 = Vout * 6
+    float voltage = vOut * 6.64;  // Vin = Vout * (R1+R2)/R1 = Vout * 6
 
     // Giới hạn giá trị điện áp (đề phòng đọc sai)
     if (voltage > 8.5) voltage = 8.5;
@@ -1762,8 +1762,8 @@ void handleMotionDetection() {
     // Giá trị gia tốc trọng trường (khoảng 9.8 m/s²)
     const float GRAVITY = 9.8;
 
-    // Kiểm tra nếu có chuyển động (độ lớn gia tốc khác nhiều so với trọng trường)
-    if (abs(filteredAccelMagnitude - GRAVITY) > 1.0) {  // Ngưỡng phát hiện chuyển động
+    // Kiểm tra nếu có chuyển động sử dụng giá trị gia tốc thô để phản hồi nhanh hơn
+    if (abs(rawAccelMagnitude - GRAVITY) > ACCEL_THRESHOLD) {
         if (!motionDetected) {
             motionDetected = true;
             motionDetectedTime = millis();
@@ -2175,6 +2175,11 @@ void handleAlarmStages() {
                     if (stage2CheckCount >= STAGE2_MAX_CHECKS) {
                         Serial.println("Đã kiểm tra " + String(STAGE2_MAX_CHECKS) + " lần mà không thấy di chuyển đáng kể");
                     }
+                } else if (!hadValidFix) {
+                    stage2CheckCount++;
+                    if (simActive) {
+                        sendSMSWithCooldown("KHONG THE LAY GPS O GIAI DOAN BAO DONG!", SMS_ALERT_GPS_LOST);
+                    }
                 }
             }
             break;
@@ -2339,8 +2344,8 @@ void handleInitialBeeps() {
     mpuKalmanX = SimpleKalmanFilter(0.5, 0.5, 0.01);
     mpuKalmanY = SimpleKalmanFilter(0.5, 0.5, 0.01);
     mpuKalmanZ = SimpleKalmanFilter(0.5, 0.5, 0.01);
-    gpsKalmanLat = SimpleKalmanFilter(5.0, 1.0, 0.01);
-    gpsKalmanLng = SimpleKalmanFilter(5.0, 1.0, 0.01);
+    gpsKalmanLat = SimpleKalmanFilter(5.0, 0.5, 0.01);
+    gpsKalmanLng = SimpleKalmanFilter(5.0, 0.5, 0.01);
 
     updateActivityTime(); // Cập nhật thời gian hoạt động
 }
