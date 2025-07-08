@@ -860,7 +860,7 @@ void goToDeepSleep(uint64_t sleepTime) {
 
     if (sleepTime > 0) {
         esp_sleep_enable_timer_wakeup(sleepTime * 1000);
-
+    }
     // Thiết lập các nguồn đánh thức - chỉ RF cho Deep Sleep
     setupWakeupSources(true); // true = deep sleep
 
