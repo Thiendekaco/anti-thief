@@ -191,6 +191,8 @@ void resetAllTimers();
 // Watchdog and module reset functions
 void setupWatchdog();
 void feedWatchdog();
+void disableWatchdogForSleep();
+void enableWatchdogAfterWakeup();
 void checkModuleStatus();
 void resetWiFiModule();
 void resetSimModule();
@@ -205,7 +207,7 @@ void setupWakeupSources(bool isDeepSleep);
 void handleWakeup();
 bool canEnterLightSleep();
 bool canEnterDeepSleep();
-void prepareForSleep();
+void prepareForSleep(bool deepSleep);
 void restoreFromSleep();
 void updateActivityTime();
 
@@ -513,6 +515,16 @@ void setupWatchdog() {
 void feedWatchdog() {
     esp_task_wdt_reset();
 }
+// Tạm thời vô hiệu hóa watchdog khi vào sleep
+void disableWatchdogForSleep() {
+    esp_task_wdt_delete(NULL);
+}
+
+// Kích hoạt lại watchdog sau khi thức dậy
+void enableWatchdogAfterWakeup() {
+    esp_task_wdt_add(NULL);
+    feedWatchdog();
+}
 
 // Kiểm tra trạng thái của các module
 void checkModuleStatus() {
@@ -755,10 +767,11 @@ bool canEnterDeepSleep() {
 }
 
 // Chuẩn bị cho việc vào chế độ sleep
-void prepareForSleep() {
+void prepareForSleep(bool deepSleep) {
     // Tạm dừng tất cả timer
     prepareTimersForSleep();
-
+    // Tạm thời tắt watchdog để tránh reset khi ngủ lâu
+    disableWatchdogForSleep();
     // Ghi lại thời điểm vào sleep
     lastSleepTime = millis();
 
@@ -768,8 +781,8 @@ void prepareForSleep() {
         gpsActive = false;
     }
 
-    // Đặt MPU vào chế độ ngủ
-    if (!mpuSleepState) {
+    // Đặt MPU vào chế độ ngủ khi chuẩn bị deep sleep
+    if (deepSleep && !mpuSleepState) {
         putMPUToSleep();
     }
 
@@ -805,8 +818,8 @@ void setupWakeupSources(bool isDeepSleep) {
 void goToLightSleep(uint64_t sleepTime) {
     Serial.println("Vào chế độ Light Sleep để tiết kiệm năng lượng...");
 
-    // Chuẩn bị cho việc vào sleep
-    prepareForSleep();
+    // Chuẩn bị cho việc vào sleep (giữ MPU hoạt động)
+    prepareForSleep(false);
 
     if (sleepTime > 0) {
         esp_sleep_enable_timer_wakeup(sleepTime * 1000);
@@ -857,8 +870,8 @@ void goToLightSleep(uint64_t sleepTime) {
 void goToDeepSleep(uint64_t sleepTime) {
     Serial.println("Vào chế độ Deep Sleep để tiết kiệm năng lượng tối đa...");
 
-    // Chuẩn bị cho việc vào sleep
-    prepareForSleep();
+    // Chuẩn bị cho việc vào sleep (tắt MPU)
+    prepareForSleep(true);
 
     if (sleepTime > 0) {
         esp_sleep_enable_timer_wakeup(sleepTime * 1000);
@@ -1762,8 +1775,8 @@ void handleMotionDetection() {
     // Giá trị gia tốc trọng trường (khoảng 9.8 m/s²)
     const float GRAVITY = 9.8;
 
-    // Kiểm tra nếu có chuyển động sử dụng giá trị gia tốc thô để phản hồi nhanh hơn
-    if (abs(rawAccelMagnitude - GRAVITY) > ACCEL_THRESHOLD) {
+    // Kiểm tra nếu có chuyển động (độ lớn gia tốc khác nhiều so với trọng trường)
+    if (abs(filteredAccelMagnitude - GRAVITY) > 1.0) {  // Ngưỡng phát hiện chuyển động
         if (!motionDetected) {
             motionDetected = true;
             motionDetectedTime = millis();
