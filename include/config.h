@@ -21,9 +21,7 @@
 #define RF_DATA_PIN 4
 #define RF_POWER_PIN 25
 #define GPS_POWER_PIN 33
-// SIM_PWRKEY_PIN được giữ lại để tương thích với mã hiện có,
-// nhưng sẽ không được sử dụng để điều khiển nguồn
-#define SIM_PWRKEY_PIN 15
+#define SIM_POWER_PIN 14
 
 // Thông số cho pin
 #define BATTERY_MAX_VOLTAGE 8.4    // 2 cell 18650 Li-ion (4.2V * 2)
@@ -46,7 +44,7 @@
 
 // Thông số thời gian
 #define RF_ACTIVE_DURATION 1000     // Thời gian kích hoạt RF (ms)
-#define RF_CHECK_INTERVAL 50000    // Kiểm tra RF mỗi 10 giây khi ngủ
+#define RF_CHECK_INTERVAL 50000    // Kiểm tra RF mỗi 50 giây khi ngủ
 #define POSITION_UPDATE_INTERVAL 300000 // Cập nhật vị trí mỗi 5 phút
 #define NETWORK_SESSION_TIMEOUT 300000 // Phiên kết nối mạng hết hạn sau 5 phút
 #define WIFI_TIMEOUT 10000         // Timeout kết nối WiFi (10 giây)
@@ -82,7 +80,7 @@
 #define VPIN_CONNECTION V4
 #define VPIN_CONTROL_TEST V5
 
-// Cấu hình cho hệ thống báo động
+// Cấu hình cho hệ thống báo độngƯ
 #define WARNING_BEEP_INTERVAL 500
 #define WARNING_BEEPS_PER_SEQUENCE 3
 #define WARNING_SEQUENCE_COUNT 3

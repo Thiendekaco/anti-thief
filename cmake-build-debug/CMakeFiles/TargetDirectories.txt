@@ -1,3 +1,0 @@
-C:/Users/ADMIN/AntiTheftSystem/cmake-build-debug/CMakeFiles/CLion_Dummy.dir
-C:/Users/ADMIN/AntiTheftSystem/cmake-build-debug/CMakeFiles/edit_cache.dir
-C:/Users/ADMIN/AntiTheftSystem/cmake-build-debug/CMakeFiles/rebuild_cache.dir

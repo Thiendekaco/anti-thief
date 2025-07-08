@@ -18,7 +18,7 @@
  * - Quản lý nguồn MPU6050 khi có chủ sở hữu
  * - Tích hợp bộ lọc Kalman để cải thiện độ chính xác GPS và phát hiện chuyển động
  *
- * Cập nhật lần cuối: 2025-06-18 19:07:47
+ * Cập nhật lần cuối: 2025-07-07 06:33:48
  * Người phát triển: nguongthienTieu
  */
 
@@ -34,8 +34,8 @@
 #include <Preferences.h>  // Thư viện Preferences
 #include "config.h"
 #include "esp_sleep.h"       // Thư viện ESP sleep
-#include "driver/rtc_io.h"   // Thư viện cho RTC IO
 #include "esp_task_wdt.h"    // Thư viện Watchdog Timer
+#include "kalman_filters.h"  // Thư viện bộ lọc Kalman (mới thêm)
 
 // QUAN TRỌNG: Ghi đè định nghĩa LED_PIN để vô hiệu hóa
 #undef LED_PIN
@@ -47,155 +47,6 @@ unsigned long lastGpsSerialLog = 0;
 
 // Forward declarations of global variables
 bool mpuSleepState = false;     // Trạng thái sleep của MPU6050
-
-// Class definitions for Kalman filters
-class GPSKalmanFilter {
-private:
-    // Tham số bộ lọc
-    float _measurementUncertainty;  // Độ không chắc chắn đo lường
-    float _estimationUncertainty;   // Độ không chắc chắn ước lượng
-    float _processNoise;            // Nhiễu quá trình
-
-    // Trạng thái hiện tại
-    float _latEstimate;             // Ước lượng vĩ độ
-    float _lngEstimate;             // Ước lượng kinh độ
-    float _latUncertainty;          // Độ không chắc chắn vĩ độ
-    float _lngUncertainty;          // Độ không chắc chắn kinh độ
-    bool _initialized;              // Đã khởi tạo chưa
-
-public:
-    // Hàm khởi tạo với các tham số mặc định
-    GPSKalmanFilter(float measurementUncertainty = 0.1,
-                    float estimationUncertainty = 1.0,
-                    float processNoise = 0.01)
-            : _measurementUncertainty(measurementUncertainty),
-              _estimationUncertainty(estimationUncertainty),
-              _processNoise(processNoise),
-              _latEstimate(0.0),
-              _lngEstimate(0.0),
-              _latUncertainty(estimationUncertainty),
-              _lngUncertainty(estimationUncertainty),
-              _initialized(false) {}
-
-    // Thiết lập lại bộ lọc
-    void reset(float initialLat = 0.0, float initialLng = 0.0) {
-        _latEstimate = initialLat;
-        _lngEstimate = initialLng;
-        _latUncertainty = _estimationUncertainty;
-        _lngUncertainty = _estimationUncertainty;
-        _initialized = (initialLat != 0.0 || initialLng != 0.0);
-    }
-
-    // Cập nhật bộ lọc với dữ liệu mới
-    void updatePosition(float measuredLat, float measuredLng, float* filteredLat, float* filteredLng) {
-        // Nếu chưa khởi tạo, sử dụng vị trí đầu tiên như là điểm xuất phát
-        if (!_initialized && (measuredLat != 0.0 || measuredLng != 0.0)) {
-            _latEstimate = measuredLat;
-            _lngEstimate = measuredLng;
-            _initialized = true;
-        }
-
-        if (_initialized) {
-            // Cập nhật vĩ độ
-            _latUncertainty += _processNoise;
-            float kalmanGainLat = _latUncertainty / (_latUncertainty + _measurementUncertainty);
-            _latEstimate += kalmanGainLat * (measuredLat - _latEstimate);
-            _latUncertainty = (1 - kalmanGainLat) * _latUncertainty;
-
-            // Cập nhật kinh độ
-            _lngUncertainty += _processNoise;
-            float kalmanGainLng = _lngUncertainty / (_lngUncertainty + _measurementUncertainty);
-            _lngEstimate += kalmanGainLng * (measuredLng - _lngEstimate);
-            _lngUncertainty = (1 - kalmanGainLng) * _lngUncertainty;
-        }
-
-        // Trả về kết quả đã lọc
-        *filteredLat = _latEstimate;
-        *filteredLng = _lngEstimate;
-    }
-};
-
-// Bộ lọc Kalman cho MPU6050
-class MPUKalmanFilter {
-private:
-    // Tham số bộ lọc
-    float _measurementUncertainty;  // Độ không chắc chắn đo lường
-    float _estimationUncertainty;   // Độ không chắc chắn ước lượng
-    float _processNoise;            // Nhiễu quá trình
-
-    // Trạng thái hiện tại
-    float _xEstimate;               // Ước lượng gia tốc trục x
-    float _yEstimate;               // Ước lượng gia tốc trục y
-    float _zEstimate;               // Ước lượng gia tốc trục z
-    float _xUncertainty;            // Độ không chắc chắn trục x
-    float _yUncertainty;            // Độ không chắc chắn trục y
-    float _zUncertainty;            // Độ không chắc chắn trục z
-    bool _initialized;              // Đã khởi tạo chưa
-
-public:
-    // Hàm khởi tạo với các tham số mặc định
-    MPUKalmanFilter(float measurementUncertainty = 0.5,
-                    float estimationUncertainty = 1.0,
-                    float processNoise = 0.05)
-            : _measurementUncertainty(measurementUncertainty),
-              _estimationUncertainty(estimationUncertainty),
-              _processNoise(processNoise),
-              _xEstimate(0.0),
-              _yEstimate(0.0),
-              _zEstimate(9.8), // Gia tốc trọng trường
-              _xUncertainty(estimationUncertainty),
-              _yUncertainty(estimationUncertainty),
-              _zUncertainty(estimationUncertainty),
-              _initialized(false) {}
-
-    // Thiết lập lại bộ lọc
-    void reset() {
-        _xEstimate = 0.0;
-        _yEstimate = 0.0;
-        _zEstimate = 9.8; // Gia tốc trọng trường
-        _xUncertainty = _estimationUncertainty;
-        _yUncertainty = _estimationUncertainty;
-        _zUncertainty = _estimationUncertainty;
-        _initialized = false;
-    }
-
-    // Cập nhật bộ lọc với dữ liệu mới
-    void updateAcceleration(float measuredX, float measuredY, float measuredZ,
-                            float* filteredX, float* filteredY, float* filteredZ) {
-        // Nếu chưa khởi tạo, sử dụng giá trị đầu tiên
-        if (!_initialized) {
-            _xEstimate = measuredX;
-            _yEstimate = measuredY;
-            _zEstimate = measuredZ;
-            _initialized = true;
-        }
-
-        if (_initialized) {
-            // Cập nhật trục x
-            _xUncertainty += _processNoise;
-            float kalmanGainX = _xUncertainty / (_xUncertainty + _measurementUncertainty);
-            _xEstimate += kalmanGainX * (measuredX - _xEstimate);
-            _xUncertainty = (1 - kalmanGainX) * _xUncertainty;
-
-            // Cập nhật trục y
-            _yUncertainty += _processNoise;
-            float kalmanGainY = _yUncertainty / (_yUncertainty + _measurementUncertainty);
-            _yEstimate += kalmanGainY * (measuredY - _yEstimate);
-            _yUncertainty = (1 - kalmanGainY) * _yUncertainty;
-
-            // Cập nhật trục z
-            _zUncertainty += _processNoise;
-            float kalmanGainZ = _zUncertainty / (_zUncertainty + _measurementUncertainty);
-            _zEstimate += kalmanGainZ * (measuredZ - _zEstimate);
-            _zUncertainty = (1 - kalmanGainZ) * _zUncertainty;
-        }
-
-        // Trả về kết quả đã lọc
-        *filteredX = _xEstimate;
-        *filteredY = _yEstimate;
-        *filteredZ = _zEstimate;
-    }
-};
 
 // Khởi tạo bộ lọc Kalman
 // Tham số: độ không chắc chắn đo lường, độ không chắc chắn ước lượng, nhiễu quá trình
@@ -320,7 +171,6 @@ bool stage2PositionSet = false;      // Đã thiết lập vị trí ban đầu 
 // Biến mới để đếm số lần phát hiện chuyển động trong giai đoạn 1
 int motionDetectionCount = 0;
 unsigned long firstMotionTime = 0;
-bool initialBeepsDone = false;
 
 // Biến trạng thái hệ thống
 bool isLowBatteryMode = false;
@@ -369,7 +219,7 @@ void performHardwareReset();
 void goToLightSleep(uint64_t sleepTime);
 void goToDeepSleep(uint64_t sleepTime);
 void checkSleepConditions();
-void setupWakeupSources();
+void setupWakeupSources(bool isDeepSleep);
 void handleWakeup();
 bool canEnterLightSleep();
 bool canEnterDeepSleep();
@@ -422,11 +272,6 @@ void IRAM_ATTR mpuISR() {
     lastActivityTime = millis(); // Cập nhật thời gian hoạt động
 }
 
-// Xử lý ngắt RTC cho chế độ deep sleep
-void IRAM_ATTR rtcIOISR() {
-    // Ngắt này chỉ để đánh thức từ deep sleep
-    // Không cần làm gì ở đây vì ESP32 sẽ thức dậy và chạy setup()
-}
 
 // Đánh thức ESP32 từ light sleep khi có hoạt động từ MPU6050 hoặc RF433
 void IRAM_ATTR externalWakeupISR() {
@@ -956,19 +801,33 @@ void prepareForSleep() {
     Serial.println("Đã chuẩn bị xong cho chế độ sleep");
 }
 
-// Thiết lập các nguồn đánh thức
-void setupWakeupSources() {
-    // Thiết lập chân ngắt MPU6050 làm nguồn đánh thức
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)MPU_INT_PIN, HIGH);
+// Thiết lập các nguồn đánh thức - đã sửa theo yêu cầu
+void setupWakeupSources(bool isDeepSleep) {
+    if (isDeepSleep) {
+        // Deep Sleep: Chỉ RF làm nguồn đánh thức
+        Serial.println("Thiết lập chỉ RF làm nguồn đánh thức cho Deep Sleep");
 
-    // Thiết lập chân dữ liệu RF làm nguồn đánh thức
-    esp_sleep_enable_ext1_wakeup(1ULL << RF_DATA_PIN, ESP_EXT1_WAKEUP_ANY_HIGH);
+        // Thiết lập chân dữ liệu RF làm nguồn đánh thức
+        esp_sleep_enable_ext1_wakeup(1ULL << RF_DATA_PIN, ESP_EXT1_WAKEUP_ANY_HIGH);
 
-    // Thiết lập timer đánh thức
-    esp_sleep_enable_timer_wakeup(RF_CHECK_INTERVAL * 1000); // Đơn vị microseconds
+        // Thiết lập timer đánh thức để kiểm tra định kỳ
+        esp_sleep_enable_timer_wakeup(300000000); // 5 phút
+    } else {
+        // Light Sleep: Chỉ MPU6050 và RF làm nguồn đánh thức
+        Serial.println("Thiết lập MPU6050 và RF làm nguồn đánh thức cho Light Sleep");
+
+        // Thiết lập chân ngắt MPU6050 làm nguồn đánh thức
+        esp_sleep_enable_ext0_wakeup((gpio_num_t)MPU_INT_PIN, HIGH);
+
+        // Thiết lập chân dữ liệu RF làm nguồn đánh thức
+        esp_sleep_enable_ext1_wakeup(1ULL << RF_DATA_PIN, ESP_EXT1_WAKEUP_ANY_HIGH);
+
+        // Thiết lập timer đánh thức
+        esp_sleep_enable_timer_wakeup(RF_CHECK_INTERVAL * 1000); // Đơn vị microseconds
+    }
 }
 
-// Đi vào chế độ light sleep
+// Đi vào chế độ light sleep - đã sửa theo yêu cầu
 void goToLightSleep(uint64_t sleepTime) {
     Serial.println("Vào chế độ Light Sleep để tiết kiệm năng lượng...");
 
@@ -983,8 +842,8 @@ void goToLightSleep(uint64_t sleepTime) {
         esp_sleep_enable_timer_wakeup(RF_CHECK_INTERVAL * 1000);
     }
 
-    // Thiết lập các nguồn đánh thức khác
-    setupWakeupSources();
+    // Thiết lập các nguồn đánh thức - chỉ MPU6050 và RF
+    setupWakeupSources(false); // false = light sleep
 
     // Đi vào light sleep
     esp_light_sleep_start();
@@ -1024,7 +883,7 @@ void goToLightSleep(uint64_t sleepTime) {
     }
 }
 
-// Đi vào chế độ deep sleep
+// Đi vào chế độ deep sleep - đã sửa theo yêu cầu
 void goToDeepSleep(uint64_t sleepTime) {
     Serial.println("Vào chế độ Deep Sleep để tiết kiệm năng lượng tối đa...");
 
@@ -1039,8 +898,8 @@ void goToDeepSleep(uint64_t sleepTime) {
         esp_sleep_enable_timer_wakeup(300000000); // 5 phút
     }
 
-    // Thiết lập các nguồn đánh thức khác
-    setupWakeupSources();
+    // Thiết lập các nguồn đánh thức - chỉ RF cho Deep Sleep
+    setupWakeupSources(true); // true = deep sleep
 
     // Ghi bootCount vào biến thông thường
     bootCount++;
@@ -1424,7 +1283,6 @@ void sendSmsAlert(const char* message) {
     // Cập nhật thời gian phản hồi SIM
     lastSimResponse = millis();
     simResponding = true;
-
     updateActivityTime(); // Cập nhật thời gian hoạt động
 }
 
@@ -1903,6 +1761,7 @@ float calculateDistanceFromInitial(float initLat, float initLng, float currLat, 
 }
 
 // Xử lý phát hiện chuyển động từ MPU6050 - Sử dụng bộ lọc Kalman
+// Đã cập nhật để phát tiếng bíp mỗi khi phát hiện chuyển động trong giai đoạn WARNING
 void handleMotionDetection() {
     // Nếu MPU đang ở chế độ sleep, bỏ qua việc xử lý chuyển động
     if (mpuSleepState) {
@@ -1957,11 +1816,22 @@ void handleMotionDetection() {
 
             // Nếu chủ sở hữu không có mặt, bắt đầu quy trình báo động
             if (!ownerPresent) {
-                // MỚI: Nếu đang ở trạng thái báo động giai đoạn 1, tăng đếm
+                // Nếu đang ở trạng thái báo động giai đoạn 1, tăng đếm và phát tiếng bíp
                 if (alarmStage == STAGE_WARNING) {
                     motionDetectionCount++;
                     Serial.print("Số lần phát hiện chuyển động: ");
                     Serial.println(motionDetectionCount);
+
+                    // Phát tiếng bíp mỗi khi phát hiện chuyển động ở giai đoạn WARNING
+                    Serial.println("Phát 3 tiếng bíp cảnh báo khi phát hiện chuyển động");
+                    // Phát 3 tiếng bíp
+                    for (int i = 0; i < 3; i++) {
+                        digitalWrite(BUZZER_PIN, HIGH);
+                        delay(200);
+                        digitalWrite(BUZZER_PIN, LOW);
+                        delay(200);
+                        feedWatchdog(); // Feed watchdog trong quá trình bíp
+                    }
 
                     // Nếu đã phát hiện đủ 3 lần, chuyển sang giai đoạn 2
                     if (motionDetectionCount >= 3) {
@@ -1970,13 +1840,22 @@ void handleMotionDetection() {
                         Serial.println("Đã phát hiện chuyển động 3 lần - Chuyển sang giai đoạn BÁO ĐỘNG");
                     }
                 }
-                    // MỚI: Nếu chưa ở trạng thái báo động, bắt đầu giai đoạn 1
+                    // Nếu chưa ở trạng thái báo động, bắt đầu giai đoạn 1
                 else if (alarmStage == STAGE_NONE) {
                     alarmStage = STAGE_WARNING;
                     alarmStartTime = millis();
                     firstMotionTime = millis();
                     motionDetectionCount = 1; // Đây là lần phát hiện đầu tiên
-                    initialBeepsDone = false; // Chưa phát tiếng bíp ban đầu
+
+                    // Phát tiếng bíp lần đầu khi phát hiện chuyển động
+                    Serial.println("Phát 3 tiếng bíp cảnh báo lần đầu");
+                    for (int i = 0; i < 3; i++) {
+                        digitalWrite(BUZZER_PIN, HIGH);
+                        delay(200);
+                        digitalWrite(BUZZER_PIN, LOW);
+                        delay(200);
+                        feedWatchdog(); // Feed watchdog trong quá trình bíp
+                    }
 
                     Serial.println("Bắt đầu giai đoạn CẢNH BÁO do phát hiện chuyển động khi chủ sở hữu không có mặt");
 
@@ -2065,7 +1944,6 @@ void checkUserPresence() {
                 stage2GpsUpdateCount = 0;
                 motionDetectionCount = 0;  // Reset biến đếm số lần phát hiện chuyển động
                 firstMotionTime = 0;       // Reset thời gian phát hiện đầu tiên
-                initialBeepsDone = false;  // Reset trạng thái phát tiếng bíp ban đầu
                 digitalWrite(BUZZER_PIN, LOW);
 
                 // Điều chỉnh timer về trạng thái bình thường
@@ -2145,7 +2023,6 @@ void checkUserPresence() {
             stage2GpsUpdateCount = 0;
             motionDetectionCount = 0;  // Reset biến đếm số lần phát hiện chuyển động
             firstMotionTime = 0;       // Reset thời gian phát hiện đầu tiên
-            initialBeepsDone = false;  // Reset trạng thái phát tiếng bíp ban đầu
             digitalWrite(BUZZER_PIN, LOW);
 
             // Điều chỉnh timer về trạng thái bình thường
@@ -2215,34 +2092,20 @@ void handleAlarmStages() {
             break;
 
         case STAGE_WARNING:
-            // GIAI ĐOẠN 1: CẢNH BÁO - Phát 3 tiếng bíp ngay lập tức
+            // GIAI ĐOẠN 1: CẢNH BÁO - Phát tiếng bíp khi phát hiện chuyển động
 
-            // MỚI: Kiểm tra nếu đã vượt quá 2 phút kể từ lần phát hiện đầu tiên
+            // Kiểm tra nếu đã vượt quá 2 phút kể từ lần phát hiện đầu tiên
             if (millis() - firstMotionTime > WARNING_INACTIVITY_TIMEOUT) {
                 // Không có chuyển động trong 2 phút kể từ lần đầu, quay về trạng thái bình thường
                 alarmStage = STAGE_NONE;
                 motionDetectionCount = 0;
-                initialBeepsDone = false;
                 digitalWrite(BUZZER_PIN, LOW);
                 Serial.println("Quá 2 phút kể từ lần phát hiện đầu tiên - Quay về trạng thái chờ");
                 break;
             }
 
-            // MỚI: Phát 3 tiếng bíp ngay khi vào giai đoạn 1 (chỉ 1 lần)
-            if (!initialBeepsDone) {
-                Serial.println("Phát 3 tiếng bíp cảnh báo ban đầu");
-
-                // Phát 3 tiếng bíp
-                for (int i = 0; i < 3; i++) {
-                    digitalWrite(BUZZER_PIN, HIGH);
-                    delay(200);
-                    digitalWrite(BUZZER_PIN, LOW);
-                    delay(200);
-                    feedWatchdog(); // Feed watchdog trong quá trình bíp
-                }
-
-                initialBeepsDone = true;
-            }
+            // Lưu ý: Chúng ta đã chuyển phần phát tiếng bíp vào hàm handleMotionDetection()
+            // để đảm bảo tiếng bíp được phát mỗi khi phát hiện chuyển động
 
             break;
 
@@ -2597,7 +2460,6 @@ void setup() {
     // Khởi tạo biến đếm chuyển động và biến liên quan
     motionDetectionCount = 0;
     firstMotionTime = 0;
-    initialBeepsDone = false;
 
     // Chỉ khởi tạo đầy đủ nếu là khởi động bình thường hoặc thức dậy từ deep sleep
     if (!isWakingUp || wakeupCause != ESP_SLEEP_WAKEUP_UNDEFINED) {
@@ -2642,7 +2504,7 @@ void setup() {
         Serial.print("Phiên bản: ");
         Serial.println(APP_VERSION);
         Serial.print("Ngày cập nhật: ");
-        Serial.println("2025-06-18 19:16:51");  // Cập nhật thời gian hiện tại
+        Serial.println("2025-07-07 06:38:17");  // Cập nhật thời gian hiện tại
         Serial.print("Người phát triển: ");
         Serial.println("nguongthienTieu");
         Serial.println("==============================\n");
@@ -2729,29 +2591,8 @@ void loop() {
             // Feed watchdog khi nhận được SMS
             feedWatchdog();
 
-            // Xử lý lệnh SOS
-            if (smsData.indexOf(SMS_SOS_CODE) >= 0) {
-                // Kích hoạt chế độ báo động khẩn cấp
-                if (alarmStage == STAGE_NONE) {
-                    alarmStage = STAGE_ALERT;
-                    alarmStartTime = millis();
-
-                    // Điều chỉnh timer cho trạng thái báo động
-                    adjustTimersForAlarm(STAGE_ALERT);
-                    previousAlarmStage = STAGE_ALERT;
-
-                    // Kích hoạt GPS và gửi vị trí
-                    activateGPS();
-
-                    // Phản hồi rằng đã nhận được lệnh
-                    String response = "Da nhan lenh SOS. Dang kich hoat bao dong va gui vi tri.";
-                    sendSMSWithCooldown(response.c_str(), SMS_ALERT_ALARM);
-
-                    Serial.println("Đã kích hoạt báo động SOS từ SMS");
-                }
-            }
-                // Xử lý lệnh STATUS
-            else if (smsData.indexOf(SMS_STATUS_CODE) >= 0) {
+            // Xử lý lệnh STATUS
+            if (smsData.indexOf(SMS_STATUS_CODE) >= 0) {
                 // Gửi trạng thái hiện tại
                 String statusMessage = "Trang thai: ";
                 statusMessage += "Pin: " + String(batteryPercentage) + "%, ";
@@ -2762,34 +2603,6 @@ void loop() {
                 sendSMSWithCooldown(statusMessage.c_str(), SMS_ALERT_SYSTEM_ERROR);
 
                 Serial.println("Đã gửi trạng thái qua SMS");
-            }
-                // Xử lý lệnh GPS
-            else if (smsData.indexOf(SMS_GPS_CODE) >= 0) {
-                // Kích hoạt GPS nếu chưa hoạt động
-                if (!gpsActive) {
-                    activateGPS();
-                    delay(3000);  // Giảm thời gian đợi xuống 3s
-                }
-
-                // Cập nhật vị trí
-                updateGpsPosition();
-
-                // Gửi vị trí qua SMS
-                if (hadValidFix) {
-                    String positionMessage = "Vi tri hien tai: ";
-                    positionMessage += "https://www.google.com/maps/dir/?api=1&destination=";
-                    positionMessage += String(currentLat, 6);
-                    positionMessage += ",";
-                    positionMessage += String(currentLng, 6);
-                    positionMessage += "&travelmode=driving";
-
-                    sendSMSWithCooldown(positionMessage.c_str(), SMS_ALERT_POSITION);
-
-                    Serial.println("Đã gửi vị trí GPS qua SMS theo yêu cầu");
-                } else {
-                    sendSMSWithCooldown("Khong the xac dinh vi tri GPS. Vui long thu lai sau.", SMS_ALERT_GPS_LOST);
-                    Serial.println("Không thể xác định vị trí GPS");
-                }
             }
                 // Xử lý lệnh STOP
             else if (smsData.indexOf(SMS_STOP_CODE) >= 0) {
@@ -2810,22 +2623,6 @@ void loop() {
 
                 Serial.println("Đã dừng tất cả trạng thái báo động theo yêu cầu SMS");
             }
-                // Xử lý lệnh SLEEP - Vào chế độ ngủ sâu
-            else if (smsData.indexOf(SMS_SLEEP_CODE) >= 0) {
-                if (alarmStage == STAGE_NONE) {
-                    // Vào chế độ ngủ sâu tự động
-                    sendSMSWithCooldown("He thong se vao che do ngu sau trong 10 giay...", SMS_ALERT_SYSTEM_ERROR);
-                    delay(10000); // Đợi 10 giây trước khi vào ngủ sâu
-                    goToDeepSleep(0); // 0 = sử dụng thời gian mặc định
-                } else {
-                    sendSMSWithCooldown("Khong the vao che do ngu khi dang trong trang thai bao dong.", SMS_ALERT_SYSTEM_ERROR);
-                }
-            }
-                // Xử lý lệnh WAKE - Cập nhật thời gian hoạt động để ngăn vào sleep
-            else if (smsData.indexOf(SMS_WAKE_CODE) >= 0) {
-                updateActivityTime(); // Cập nhật thời gian hoạt động để tránh vào sleep ngay lập tức
-                sendSMSWithCooldown("He thong dang duoc danh thuc va se khong vao che do ngu trong 10 phut.", SMS_ALERT_SYSTEM_ERROR);
-            }
                 // Xử lý lệnh RESET - Reset các module bị treo
             else if (smsData.indexOf("RESET") >= 0) {
                 sendSMSWithCooldown("Dang thuc hien reset he thong...", SMS_ALERT_MODULE_RESET);
@@ -2842,32 +2639,7 @@ void loop() {
                 // Thực hiện reset phần cứng
                 performHardwareReset();
             }
-                // Xử lý lệnh MPU - Điều khiển chế độ sleep của MPU6050
-            else if (smsData.indexOf("MPU SLEEP") >= 0) {
-                if (!mpuSleepState) {
-                    putMPUToSleep();
-                    sendSMSWithCooldown("Da dua MPU6050 vao che do ngu.", SMS_ALERT_SYSTEM_ERROR);
-                } else {
-                    sendSMSWithCooldown("MPU6050 da o trong che do ngu.", SMS_ALERT_SYSTEM_ERROR);
-                }
-            }
-            else if (smsData.indexOf("MPU WAKE") >= 0) {
-                if (mpuSleepState) {
-                    wakeMPUFromSleep();
-                    sendSMSWithCooldown("Da danh thuc MPU6050 tu che do ngu.", SMS_ALERT_SYSTEM_ERROR);
-                } else {
-                    sendSMSWithCooldown("MPU6050 da dang hoat dong.", SMS_ALERT_SYSTEM_ERROR);
-                }
-            }
-                // Xử lý lệnh FILTER - Điều chỉnh tham số bộ lọc Kalman
-            else if (smsData.indexOf("FILTER") >= 0) {
-                // Thiết lập lại bộ lọc Kalman với các tham số mặc định
-                mpuKalman = MPUKalmanFilter(0.5, 1.0, 0.05);
-                gpsKalman = GPSKalmanFilter(0.1, 1.0, 0.01);
-
-                sendSMSWithCooldown("Da cai dat lai bo loc Kalman ve tham so mac dinh.", SMS_ALERT_SYSTEM_ERROR);
-                Serial.println("Đã thiết lập lại bộ lọc Kalman về tham số mặc định");
-            }
+            // Các lệnh khác đã bị loại bỏ theo yêu cầu
         }
     }
 
