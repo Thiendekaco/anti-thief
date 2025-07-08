@@ -112,6 +112,7 @@ unsigned long lastRfActivation = 0;
 unsigned long alarmStartTime = 0;
 unsigned long lastDistanceCheck = 0;
 unsigned long motionDetectedTime = 0;
+unsigned long motionIgnoreUntil = 0; // Bỏ qua phát hiện chuyển động đến thời điểm này
 unsigned long sequenceEndTime = 0;
 unsigned long gpsActivationTime = 0;
 unsigned long lastBatteryCheck = 0;
@@ -822,6 +823,8 @@ void goToLightSleep(uint64_t sleepTime) {
     // Đoạn code sau này sẽ được thực thi khi ESP32 thức dậy từ light sleep
     wakeupCause = esp_sleep_get_wakeup_cause();
     isWakingUp = true;
+    // Bỏ qua phát hiện chuyển động một thời gian ngắn sau khi thức dậy
+    motionIgnoreUntil = millis() + MOTION_WARMUP_DURATION;
 
     Serial.println("Đã thức dậy từ Light Sleep!");
     Serial.print("Nguyên nhân thức dậy: ");
@@ -1771,7 +1774,11 @@ void handleMotionDetection() {
     if (mpuSleepState) {
         return;
     }
-
+    // Bỏ qua phát hiện khi còn trong thời gian khởi động
+    if (millis() < motionIgnoreUntil) {
+        motionDetected = false;
+        return;
+    }
     // Đọc giá trị gia tốc từ MPU6050
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -2532,7 +2539,8 @@ void setup() {
 
         // Khởi tạo các timer
         setupBaseTimers();
-
+        // Bỏ qua phát hiện chuyển động trong thời gian khởi động
+        motionIgnoreUntil = millis() + MOTION_WARMUP_DURATION;
         // Cập nhật trạng thái pin ban đầu
         checkBatteryStatus();
 

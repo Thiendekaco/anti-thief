@@ -45,7 +45,8 @@
 #define WARNING_INACTIVITY_TIMEOUT 120000 // Thời gian không hoạt động để thoát giai đoạn 1 (2 phút)
 #define STAGE2_TIMEOUT 60000       // Thời gian tối đa cho giai đoạn 2 (1 phút)
 #define STAGE2_MAX_CHECKS 3        // Số lần kiểm tra tối đa trong giai đoạn 2
-
+// Thời gian bỏ qua phát hiện chuyển động sau khi khởi động hoặc thức dậy (ms)
+#define MOTION_WARMUP_DURATION 5000
 // Ngưỡng cảnh báo
 #define ACCEL_THRESHOLD 1.0        // Ngưỡng gia tốc để phát hiện chuyển động (m/s²)
 #define DISTANCE_THRESHOLD 10.0    // Ngưỡng khoảng cách để phát hiện di chuyển (mét)
