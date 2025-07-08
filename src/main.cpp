@@ -1,27 +1,3 @@
-/**
- * Hệ thống Theo dõi và Chống trộm Xe ESP32 - Phiên bản Tích Hợp 2025
- * Sử dụng Blynk v1 (Legacy) - PlatformIO Edition
- *
- * Tính năng:
- * - Kết nối chỉ theo yêu cầu (WiFi/4G) khi kích hoạt qua RF433
- * - Phát hiện chuyển động sử dụng cảm biến gia tốc MPU6050
- * - Theo dõi vị trí GPS (ATGM336H) chỉ khi cần thiết (chỉ gửi qua SMS)
- * - Nhận dạng người dùng RF433MHz với 3 mã khác nhau (user, network, reset)
- * - Quản lý năng lượng tối ưu để kéo dài thời lượng pin
- * - Tích hợp Blynk thông qua WiFi hoặc 4G (A7682S) (không gửi GPS)
- * - Báo động 3 giai đoạn theo cấu hình cụ thể
- * - Cảnh báo pin thấp qua SMS khi dưới 20%
- * - Chế độ ngủ cho module GPS ATGM336H
- * - Chế độ Light Sleep và Deep Sleep cho ESP32
- * - Watchdog timer để tự động reset khi phát hiện treo
- * - Chống spam SMS với cơ chế cooldown
- * - Quản lý nguồn MPU6050 khi có chủ sở hữu
- * - Tích hợp bộ lọc Kalman để cải thiện độ chính xác GPS và phát hiện chuyển động
- *
- * Cập nhật lần cuối: 2025-07-07 06:33:48
- * Người phát triển: nguongthienTieu
- */
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
@@ -119,9 +95,10 @@ bool ownerPresent = false;
 bool motionDetected = false;
 bool vehicleMoving = false;
 bool gpsActive = false;
-bool gpsPowerState = true;      // GPS luôn được cấp nguồn (true)
+bool gpsPowerState = false;     // Trạng thái nguồn GPS
 bool rfEnabled = true;          // RF433 enabled by default
-bool rfPowerState = true;      // RF luôn được cấp nguồn (true)
+bool rfPowerState = false;      // Trạng thái nguồn RF
+bool simPowerState = false;     // Trạng thái nguồn SIM
 bool hadValidFix = false;       // Đã từng có tín hiệu GPS hợp lệ
 bool lowBatteryAlerted = false; // Theo dõi đã gửi cảnh báo pin thấp hay chưa
 bool signalLost = false;        // Đánh dấu khi mất tín hiệu
@@ -256,6 +233,13 @@ void checkNetworkTimeout();
 void syncBlynk4G();
 void sendBlynkNotification(const char* message);
 void checkWifiConnection();
+void powerOnGPS();
+void powerOffGPS();
+void powerOnSIM();
+void powerOffSIM();
+void powerOnRF();
+void powerOffRF();
+void applyStageModuleStates(AlarmStage stage);
 void handleMotionDetection();
 void checkUserPresence();
 void handleAlarmStages();
@@ -798,7 +782,6 @@ void prepareForSleep() {
         deactivateSim();
     }
 
-    // RF luôn được cấp nguồn, không cần bật/tắt
 
     // Bỏ qua việc tắt LED vì đã vô hiệu hóa
     Serial.println("Đã chuẩn bị xong cho chế độ sleep");
@@ -807,26 +790,14 @@ void prepareForSleep() {
 // Thiết lập các nguồn đánh thức - đã sửa theo yêu cầu
 void setupWakeupSources(bool isDeepSleep) {
     if (isDeepSleep) {
-        // Deep Sleep: Chỉ RF làm nguồn đánh thức
-        Serial.println("Thiết lập chỉ RF làm nguồn đánh thức cho Deep Sleep");
-
-        // Thiết lập chân dữ liệu RF làm nguồn đánh thức
+        Serial.println("Thiết lập RF433 làm nguồn đánh thức cho Deep Sleep");
         esp_sleep_enable_ext1_wakeup(1ULL << RF_DATA_PIN, ESP_EXT1_WAKEUP_ANY_HIGH);
 
-        // Thiết lập timer đánh thức để kiểm tra định kỳ
-        esp_sleep_enable_timer_wakeup(300000000); // 5 phút
-    } else {
-        // Light Sleep: Chỉ MPU6050 và RF làm nguồn đánh thức
-        Serial.println("Thiết lập MPU6050 và RF làm nguồn đánh thức cho Light Sleep");
 
-        // Thiết lập chân ngắt MPU6050 làm nguồn đánh thức
+    } else {
+        Serial.println("Thiết lập MPU6050 làm nguồn đánh thức cho Light Sleep");
         esp_sleep_enable_ext0_wakeup((gpio_num_t)MPU_INT_PIN, HIGH);
 
-        // Thiết lập chân dữ liệu RF làm nguồn đánh thức
-        esp_sleep_enable_ext1_wakeup(1ULL << RF_DATA_PIN, ESP_EXT1_WAKEUP_ANY_HIGH);
-
-        // Thiết lập timer đánh thức
-        esp_sleep_enable_timer_wakeup(RF_CHECK_INTERVAL * 1000); // Đơn vị microseconds
     }
 }
 
@@ -837,12 +808,8 @@ void goToLightSleep(uint64_t sleepTime) {
     // Chuẩn bị cho việc vào sleep
     prepareForSleep();
 
-    // Thiết lập thời gian đánh thức nếu được chỉ định
     if (sleepTime > 0) {
-        esp_sleep_enable_timer_wakeup(sleepTime * 1000); // Đơn vị microseconds
-    } else {
-        // Mặc định là RF_CHECK_INTERVAL nếu không chỉ định
-        esp_sleep_enable_timer_wakeup(RF_CHECK_INTERVAL * 1000);
+        esp_sleep_enable_timer_wakeup(sleepTime * 1000);
     }
 
     // Thiết lập các nguồn đánh thức - chỉ MPU6050 và RF
@@ -863,11 +830,9 @@ void goToLightSleep(uint64_t sleepTime) {
             Serial.println("Ngắt từ MPU6050 (chuyển động)");
             mpuInterrupt = true;  // Xử lý như ngắt MPU
             break;
-        case ESP_SLEEP_WAKEUP_EXT1:
-            Serial.println("Ngắt từ RF433 (tín hiệu RF)");
-            break;
+
         case ESP_SLEEP_WAKEUP_TIMER:
-            Serial.println("Hết thời gian ngủ - kiểm tra định kỳ");
+            Serial.println("Hết thời gian ngủ");
             break;
         default:
             Serial.println("Nguyên nhân khác");
@@ -893,13 +858,8 @@ void goToDeepSleep(uint64_t sleepTime) {
     // Chuẩn bị cho việc vào sleep
     prepareForSleep();
 
-    // Thiết lập thời gian đánh thức
     if (sleepTime > 0) {
-        esp_sleep_enable_timer_wakeup(sleepTime * 1000); // Đơn vị microseconds
-    } else {
-        // Mặc định là 5 phút nếu không chỉ định
-        esp_sleep_enable_timer_wakeup(300000000); // 5 phút
-    }
+        esp_sleep_enable_timer_wakeup(sleepTime * 1000);
 
     // Thiết lập các nguồn đánh thức - chỉ RF cho Deep Sleep
     setupWakeupSources(true); // true = deep sleep
@@ -924,14 +884,12 @@ void handleWakeup() {
         Serial.print("Nguyên nhân thức dậy: ");
 
         switch(wakeupCause) {
-            case ESP_SLEEP_WAKEUP_EXT0:
-                Serial.println("Ngắt từ MPU6050 (chuyển động)");
-                break;
+
             case ESP_SLEEP_WAKEUP_EXT1:
                 Serial.println("Ngắt từ RF433 (tín hiệu RF)");
                 break;
             case ESP_SLEEP_WAKEUP_TIMER:
-                Serial.println("Hết thời gian ngủ - kiểm tra định kỳ");
+                Serial.println("Hết thời gian ngủ");
                 break;
             default:
                 Serial.println("Nguyên nhân khác");
@@ -979,20 +937,26 @@ void acknowledgeUserPresence() {
     updateActivityTime(); // Cập nhật thời gian hoạt động
 }
 
-// Kích hoạt module RF - Đã sửa đổi vì RF luôn được cấp nguồn
-void activateRF() {
-    // RF luôn được cấp nguồn, không cần bật/tắt
-    // Chỉ cập nhật trạng thái
+// Điều khiển nguồn RF433
+    void powerOnRF() {
+        digitalWrite(RF_POWER_PIN, HIGH);
     rfPowerState = true;
-    updateActivityTime(); // Cập nhật thời gian hoạt động
 }
 
-// Tắt module RF - Đã sửa đổi, RF luôn bật
+    void powerOffRF() {
+        digitalWrite(RF_POWER_PIN, LOW);
+        rfPowerState = false;
+    }
+
+// Kích hoạt module RF
+    void activateRF() {
+        powerOnRF();
+        updateActivityTime();
+    }
+
+// Tắt module RF
 void deactivateRF() {
-    // RF luôn được cấp nguồn, không cần bật/tắt
-    // Nhưng vẫn giữ hàm này để tương thích với code cũ
-    // Chỉ cập nhật trạng thái logic
-    rfPowerState = true; // Luôn giữ trạng thái là true
+    powerOffRF();
 }
 
 // Vô hiệu hóa RF433 (khi xe đã bị lấy trộm) - Đã sửa đổi
@@ -1030,6 +994,27 @@ void wakeGPSFromSleep() {
     lastGpsResponse = millis();
     gpsResponding = true;
 }
+// Điều khiển nguồn GPS
+void powerOnGPS() {
+        digitalWrite(GPS_POWER_PIN, HIGH);
+        gpsPowerState = true;
+    }
+
+    void powerOffGPS() {
+        digitalWrite(GPS_POWER_PIN, LOW);
+        gpsPowerState = false;
+    }
+
+// Điều khiển nguồn SIM
+    void powerOnSIM() {
+        digitalWrite(SIM_POWER_PIN, HIGH);
+        simPowerState = true;
+    }
+
+    void powerOffSIM() {
+        digitalWrite(SIM_POWER_PIN, LOW);
+        simPowerState = false;
+    }
 
 // Cập nhật vị trí GPS - Đã tích hợp bộ lọc Kalman và giới hạn log
 void updateGpsPosition() {
@@ -1119,8 +1104,8 @@ void activateSim() {
     if (!simActive) {
         Serial.println("Kích hoạt module SIM A7682S");
 
-        // Không sử dụng GPIO để điều khiển nguồn SIM
-        // Thay vào đó, chỉ sử dụng AT command
+        powerOnSIM();
+
 
         // Kiểm tra module
         SerialSIM.println("AT");
@@ -1136,44 +1121,29 @@ void activateSim() {
         lastSimResponse = millis();
         simResponding = true;
 
-        updateActivityTime(); // Cập nhật thời gian hoạt động
+        updateActivityTime();
     }
 }
 
 // Tắt module SIM A7682S - Sửa đổi để sử dụng chế độ ngủ
 void deactivateSim() {
     if (simActive && !networkModeActive && alarmStage != STAGE_TRACKING) {
-        Serial.println("Đặt module SIM vào chế độ tiết kiệm năng lượng");
+        Serial.println("Tắt nguồn module SIM");
 
-        // Thay vì tắt nguồn hoàn toàn, sử dụng AT command để vào chế độ tiết kiệm năng lượng
-        SerialSIM.println("AT+CSCLK=1");  // Cho phép module vào chế độ ngủ
-        delay(500);
-
-        // Vẫn giữ simActive = true, nhưng đánh dấu trạng thái ngủ
-        simActive = true;  // Module vẫn hoạt động nhưng ở chế độ ngủ
+        powerOffSIM();
+        simActive = false;
         blynkOverSIM = false;
 
-        Serial.println("Module SIM đã vào chế độ tiết kiệm năng lượng");
     }
 }
 
 // Đánh thức SIM từ chế độ ngủ
 void wakeSimFromSleep() {
-    if (simActive) {
-        // Gửi AT command để đánh thức module
-        SerialSIM.println("AT");  // Bất kỳ AT command nào cũng đánh thức module
+    if (simActive && !simPowerState) {
+        powerOnSIM();
         delay(500);
-        SerialSIM.println("AT+CSCLK=0");  // Tắt chế độ ngủ
-        delay(500);
-
-        // Kiểm tra phản hồi
-        if (checkSimResponse()) {
-            Serial.println("Module SIM đã được đánh thức từ chế độ ngủ");
-        } else {
-            // Nếu không phản hồi, thử reset nhẹ nhàng
-            SerialSIM.println("AT+CFUN=1,1");  // Soft reset
-            delay(3000);
-        }
+        if (simActive && !simPowerState) {
+            powerOnSIM();
     }
 }
 
@@ -1182,7 +1152,7 @@ void activateGPS() {
     if (!gpsActive) {
         Serial.println("Kích hoạt module GPS ATGM336H");
 
-        // Đánh thức GPS từ chế độ ngủ
+        powerOnGPS();
         wakeGPSFromSleep();
 
         gpsActive = true;
@@ -1210,19 +1180,17 @@ void activateGPS() {
             signalLost = false;
         }
 
-        updateActivityTime(); // Cập nhật thời gian hoạt động
+        updateActivityTime();
     }
 }
 
 // Tắt GPS ATGM336H - Chỉ đặt vào chế độ ngủ, không cắt nguồn
 void deactivateGPS() {
     if (gpsActive && alarmStage == STAGE_NONE && !networkModeActive) {
-        Serial.println("Đặt module GPS ATGM336H vào chế độ ngủ để tiết kiệm năng lượng");
+        Serial.println("Tắt nguồn GPS ATGM336H");
 
-        // Đặt GPS vào chế độ ngủ
         putGPSToSleep();
-
-        // Chỉ thay đổi trạng thái logic, không cắt nguồn
+        powerOffGPS();
         gpsActive = false;
         gpsActivationTime = 0;
         hadValidFix = false;
@@ -1230,6 +1198,35 @@ void deactivateGPS() {
     }
 }
 
+// Áp dụng trạng thái nguồn cho từng giai đoạn báo động
+    void applyStageModuleStates(AlarmStage stage) {
+        switch (stage) {
+            case STAGE_NONE:
+                powerOnRF();
+                if (!mpuSleepState) putMPUToSleep();
+                if (gpsActive) deactivateGPS();
+                if (simActive) deactivateSim();
+                break;
+            case STAGE_WARNING:
+                powerOnRF();
+                if (mpuSleepState) wakeMPUFromSleep();
+                if (gpsActive) deactivateGPS();
+                if (simActive) deactivateSim();
+                break;
+            case STAGE_ALERT:
+                powerOnRF();
+                if (mpuSleepState) wakeMPUFromSleep();
+                if (!gpsActive) activateGPS();
+                if (!simActive) activateSim();
+                break;
+            case STAGE_TRACKING:
+                powerOffRF();
+                if (!mpuSleepState) putMPUToSleep();
+                if (!gpsActive) activateGPS();
+                if (!simActive) activateSim();
+                break;
+        }
+    }
 // Tính khoảng cách di chuyển - Sử dụng vị trí đã lọc Kalman
 float calculateDistance() {
     if (!initialPositionSet || !hadValidFix) {
@@ -1902,7 +1899,7 @@ void checkUserPresence() {
     // Nếu RF đã bị vô hiệu hóa, không kiểm tra
     if (!rfEnabled) return;
 
-    // RF luôn bật nguồn, không cần kiểm tra rfPowerState nữa
+    // Bỏ qua nếu RF đã tắt nguồn
 
     bool previousOwnerState = ownerPresent;
     bool detectedRF = false;
@@ -1955,7 +1952,7 @@ void checkUserPresence() {
 
                 // Điều chỉnh timer về trạng thái bình thường
                 if (previousAlarmStage != STAGE_NONE) {
-                    adjustTimersForAlarm(STAGE_NONE);
+                    applyStageModuleStates(alarmStage);
                     previousAlarmStage = STAGE_NONE;
                 }
 
@@ -2320,8 +2317,7 @@ void handleInitialBeeps() {
 
     // Kiểm tra module RF
     Serial.print("- Module RF433: ");
-    // RF luôn được kích hoạt
-    Serial.println("Đã kích hoạt");
+    Serial.println(rfPowerState ? "Đã bật" : "Đang tắt");
 
     // Feed watchdog trong quá trình kiểm tra thiết bị
     feedWatchdog();
@@ -2446,17 +2442,19 @@ void setup() {
     // LED đã bị vô hiệu hóa, không cần cấu hình
     pinMode(RF_POWER_PIN, OUTPUT);
     pinMode(GPS_POWER_PIN, OUTPUT);
-    // Không sử dụng PWRKEY để điều khiển nguồn SIM
+    pinMode(SIM_POWER_PIN, OUTPUT);
     pinMode(MPU_INT_PIN, INPUT_PULLUP);
 
     // Thiết lập trạng thái ban đầu
     digitalWrite(BUZZER_PIN, LOW);      // Tắt còi
     // Bỏ qua LED (đã vô hiệu hóa)
-    digitalWrite(RF_POWER_PIN, HIGH);   // RF luôn BẬT - ĐÃ SỬA ĐỔI
-    digitalWrite(GPS_POWER_PIN, HIGH);  // GPS luôn BẬT
+    digitalWrite(RF_POWER_PIN, HIGH);   // RF bật
+    digitalWrite(GPS_POWER_PIN, LOW);   // GPS tắt
+    digitalWrite(SIM_POWER_PIN, LOW);   // SIM tắt
 
-    // Cập nhật biến trạng thái
-    rfPowerState = true;  // RF luôn BẬT - ĐÃ SỬA ĐỔI
+    rfPowerState = true;
+    gpsPowerState = false;
+    simPowerState = false;
 
     // Đợi ESP32 ổn định sau khi khởi động
     delay(1000);
@@ -2503,10 +2501,10 @@ void setup() {
         Serial.println("RF433 đã được khởi tạo");
 
         // Cập nhật trạng thái GPS
-        gpsPowerState = true;  // GPS luôn được cấp nguồn
+        gpsPowerState = false;
 
-        // Đặt GPS vào chế độ ngủ ban đầu để tiết kiệm pin
-        putGPSToSleep();
+        // Đảm bảo GPS tắt nguồn ban đầu
+        powerOffGPS();
 
         // Hiển thị thông tin phiên bản
         Serial.println("\n==============================");
@@ -2527,7 +2525,6 @@ void setup() {
             handleInitialBeeps();
         }
 
-        // RF luôn bật nguồn, không cần kích hoạt riêng
 
         // Khởi tạo các timer
         setupBaseTimers();
@@ -2548,7 +2545,7 @@ void setup() {
 
         Serial.println("Hệ thống đã sẵn sàng và đang chờ tín hiệu...");
     }
-
+    applyStageModuleStates(alarmStage);
     // Khởi tạo thời gian hoạt động
     updateActivityTime();
 }
@@ -2626,7 +2623,7 @@ void loop() {
 
                 // Khôi phục lại RF nếu có thể
                 rfEnabled = true;
-                // RF luôn bật nguồn, không cần kích hoạt riêng
+                powerOnRF();
 
                 // Điều chỉnh timer về trạng thái bình thường
                 adjustTimersForAlarm(STAGE_NONE);
