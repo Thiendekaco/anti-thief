@@ -940,13 +940,13 @@ void checkSleepConditions() {
 // Hàm phát hiện người dùng qua RF - phát âm thanh xác nhận
 void acknowledgeUserPresence() {
     // Phát ra 2 tiếng bíp ngắn để xác nhận đã nhận diện người dùng
-    digitalWrite(BUZZER_PIN, HIGH);
+    setBuzzer(true);
     delay(100);
-    digitalWrite(BUZZER_PIN, LOW);
+    setBuzzer(false);
     delay(100);
-    digitalWrite(BUZZER_PIN, HIGH);
+    setBuzzer(true);
     delay(100);
-    digitalWrite(BUZZER_PIN, LOW);
+    setBuzzer(false);
 
     Serial.println("Đã xác nhận nhận diện chủ sở hữu với âm thanh");
     updateActivityTime(); // Cập nhật thời gian hoạt động
@@ -1272,7 +1272,7 @@ float getBatteryVoltage() {
     float vOut = adcValue * (3.3 / 4095.0);
 
     // Tính toán điện áp pin thực tế với mạch chia áp R1=20k, R2=100k
-    float voltage = vOut * 6.64;  // Vin = Vout * (R1+R2)/R1 = Vout * 6
+    float voltage = vOut * 6.5;  // Vin = Vout * (R1+R2)/R1 = Vout * 6
 
     // Giới hạn giá trị điện áp (đề phòng đọc sai)
     if (voltage > 8.5) voltage = 8.5;
@@ -1307,10 +1307,6 @@ void checkBatteryStatus() {
     Serial.print(batteryPercentage);
     Serial.println("%)");
 
-    // Gửi thông tin lên Blynk nếu đã kết nối
-    if (networkModeActive && (Blynk.connected() || blynkOverSIM)) {
-        Blynk.virtualWrite(VPIN_BATTERY, batteryPercentage);  // Gửi phần trăm pin
-    }
 
     // Kiểm tra pin thấp
     if (batteryPercentage <= LOW_BATTERY_THRESHOLD && !lowBatteryAlerted) {
@@ -1354,6 +1350,11 @@ void checkBatteryStatus() {
 
         Serial.println("Pin đã được sạc đầy, reset trạng thái cảnh báo pin thấp");
     }
+
+    // Cập nhật tất cả các widget Blynk sau khi xử lý trạng thái pin
+    if (networkModeActive && (Blynk.connected() || blynkOverSIM)) {
+        updateBlynkData();
+    }
 }
 
 // Cập nhật dữ liệu lên Blynk (không bao gồm GPS)
@@ -1363,11 +1364,28 @@ void updateBlynkData() {
         Blynk.virtualWrite(VPIN_OWNER, ownerPresent ? 1 : 0);
         Blynk.virtualWrite(VPIN_ALARM_STATE, (int)alarmStage);
         Blynk.virtualWrite(VPIN_MOTION, motionDetected ? 1 : 0);
+
+        // Trạng thái còi (1 = bật, 0 = tắt)
+        Blynk.virtualWrite(VPIN_BUZZER, digitalRead(BUZZER_PIN));
+
+        // Trạng thái kết nối: 0 = không kết nối, 1 = WiFi, 2 = 4G
+        int connectionState = 0;
+        if (wifiConnected) connectionState = 1;
+        else if (usingSIM && blynkOverSIM) connectionState = 2;
+        Blynk.virtualWrite(VPIN_CONNECTION, connectionState);
+
         updateActivityTime(); // Cập nhật thời gian hoạt động
 
         // Cập nhật thời gian phản hồi WiFi
         lastWifiResponse = millis();
         wifiResponding = true;
+    }
+}
+// Bật/tắt còi và cập nhật trạng thái lên Blynk
+void setBuzzer(bool on) {
+    digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
+    if (networkModeActive && (Blynk.connected() || blynkOverSIM)) {
+        Blynk.virtualWrite(VPIN_BUZZER, on ? 1 : 0);
     }
 }
 
@@ -1531,8 +1549,13 @@ void deactivateNetworkMode() {
     if (networkModeActive) {
         Serial.println("Hủy chế độ kết nối mạng");
 
-        // Ngắt kết nối Blynk
+        // Thông báo ngắt kết nối trước khi đóng
         if (Blynk.connected()) {
+            wifiConnected = false;
+            usingSIM = false;
+            blynkOverSIM = false;
+            Blynk.virtualWrite(VPIN_CONNECTION, 0);
+            updateBlynkData();
             Blynk.disconnect();
         }
 
@@ -1812,9 +1835,9 @@ void handleMotionDetection() {
                     Serial.println("Phát 3 tiếng bíp cảnh báo khi phát hiện chuyển động");
                     // Phát 3 tiếng bíp
                     for (int i = 0; i < 3; i++) {
-                        digitalWrite(BUZZER_PIN, HIGH);
+                        setBuzzer(true);
                         delay(200);
-                        digitalWrite(BUZZER_PIN, LOW);
+                        setBuzzer(false);
                         delay(200);
                         feedWatchdog(); // Feed watchdog trong quá trình bíp
                     }
@@ -1836,9 +1859,9 @@ void handleMotionDetection() {
                     // Phát tiếng bíp lần đầu khi phát hiện chuyển động
                     Serial.println("Phát 3 tiếng bíp cảnh báo lần đầu");
                     for (int i = 0; i < 3; i++) {
-                        digitalWrite(BUZZER_PIN, HIGH);
+                        setBuzzer(true);
                         delay(200);
-                        digitalWrite(BUZZER_PIN, LOW);
+                        setBuzzer(false);
                         delay(200);
                         feedWatchdog(); // Feed watchdog trong quá trình bíp
                     }
@@ -1930,7 +1953,7 @@ void checkUserPresence() {
                 stage2GpsUpdateCount = 0;
                 motionDetectionCount = 0;  // Reset biến đếm số lần phát hiện chuyển động
                 firstMotionTime = 0;       // Reset thời gian phát hiện đầu tiên
-                digitalWrite(BUZZER_PIN, LOW);
+                setBuzzer(false);
 
                 // Điều chỉnh timer về trạng thái bình thường
                 if (previousAlarmStage != STAGE_NONE) {
@@ -1954,9 +1977,9 @@ void checkUserPresence() {
 
                 // Phát âm thanh xác nhận reset (3 tiếng bíp)
                 for (int i = 0; i < 3; i++) {
-                    digitalWrite(BUZZER_PIN, HIGH);
+                    setBuzzer(true);
                     delay(100);
-                    digitalWrite(BUZZER_PIN, LOW);
+                    setBuzzer(false);
                     delay(100);
                 }
 
@@ -2009,7 +2032,7 @@ void checkUserPresence() {
             stage2GpsUpdateCount = 0;
             motionDetectionCount = 0;  // Reset biến đếm số lần phát hiện chuyển động
             firstMotionTime = 0;       // Reset thời gian phát hiện đầu tiên
-            digitalWrite(BUZZER_PIN, LOW);
+            setBuzzer(false);
 
             // Điều chỉnh timer về trạng thái bình thường
             adjustTimersForAlarm(STAGE_NONE);
@@ -2045,13 +2068,13 @@ void handleAlarmStages() {
             sequenceCompleted = false;
             lastBeepEndTime = 0;
             lastMotionTime = millis();  // Cập nhật thời gian phát hiện chuyển động
-            digitalWrite(BUZZER_PIN, LOW);  // Đảm bảo còi tắt khi bắt đầu
+            setBuzzer(false);  // Đảm bảo còi tắt khi bắt đầu
             Serial.println("Đã vào giai đoạn 1: CẢNH BÁO - Chuỗi bíp");
         }
         else if (alarmStage == STAGE_ALERT) {
             stage2CheckCount = 0;
             stage2PositionSet = false;
-            digitalWrite(BUZZER_PIN, HIGH);  // Bật còi liên tục
+            setBuzzer(true);  // Bật còi liên tục
             Serial.println("Đã vào giai đoạn 2: BÁO ĐỘNG - Còi liên tục & GPS");
 
             // Kích hoạt GPS và SIM
@@ -2064,7 +2087,7 @@ void handleAlarmStages() {
             }
         }
         else if (alarmStage == STAGE_TRACKING) {
-            digitalWrite(BUZZER_PIN, LOW);  // Tắt còi khi vào chế độ theo dõi
+            setBuzzer(false);  // Tắt còi khi vào chế độ theo dõi
             Serial.println("Đã vào giai đoạn 3: THEO DÕI - Gửi vị trí liên tục");
 
             // Vô hiệu hóa RF khi chuyển sang theo dõi
@@ -2085,7 +2108,7 @@ void handleAlarmStages() {
                 // Không có chuyển động trong 2 phút kể từ lần đầu, quay về trạng thái bình thường
                 alarmStage = STAGE_NONE;
                 motionDetectionCount = 0;
-                digitalWrite(BUZZER_PIN, LOW);
+                setBuzzer(false);
                 Serial.println("Quá 2 phút kể từ lần phát hiện đầu tiên - Quay về trạng thái chờ");
                 break;
             }
@@ -2099,12 +2122,12 @@ void handleAlarmStages() {
             // GIAI ĐOẠN 2: BÁO ĐỘNG - Còi liên tục và theo dõi vị trí
 
             // Bật còi liên tục
-            digitalWrite(BUZZER_PIN, HIGH);
+            setBuzzer(true);
 
             // Kiểm tra nếu chủ sở hữu xuất hiện, quay về trạng thái bình thường
             if (ownerPresent) {
                 alarmStage = STAGE_NONE;
-                digitalWrite(BUZZER_PIN, LOW);
+                setBuzzer(false);
                 Serial.println("Chủ sở hữu đã xuất hiện - Quay về trạng thái bình thường");
                 updateActivityTime();
                 break;
@@ -2204,7 +2227,7 @@ void handleAlarmStages() {
             // GIAI ĐOẠN 3: THEO DÕI - Gửi vị trí liên tục
 
             // Tắt còi để tiết kiệm pin
-            digitalWrite(BUZZER_PIN, LOW);
+            setBuzzer(false);
 
             // Đảm bảo GPS và SIM luôn hoạt động
             if (!gpsActive) activateGPS();
@@ -2281,9 +2304,9 @@ void handleAlarmStages() {
 void handleInitialBeeps() {
     // Phát 3 tiếng bíp để xác nhận hệ thống đã khởi động
     for (int i = 0; i < 3; i++) {
-        digitalWrite(BUZZER_PIN, HIGH);
+        setBuzzer(true);
         delay(100);
-        digitalWrite(BUZZER_PIN, LOW);
+        setBuzzer(false);
         delay(100);
     }
 
@@ -2297,9 +2320,9 @@ void handleInitialBeeps() {
     } else {
         Serial.println("KHÔNG TÌM THẤY");
         // Phát tiếng bíp dài nếu không tìm thấy MPU6050
-        digitalWrite(BUZZER_PIN, HIGH);
+        setBuzzer(true);
         delay(1000);
-        digitalWrite(BUZZER_PIN, LOW);
+        setBuzzer(false);
     }
 
     // Kiểm tra module RF
@@ -2335,9 +2358,9 @@ void handleInitialBeeps() {
         Serial.println("KHÔNG PHẢN HỒI");
         // Phát 2 tiếng bíp dài nếu GPS không phản hồi
         for (int i = 0; i < 2; i++) {
-            digitalWrite(BUZZER_PIN, HIGH);
+            setBuzzer(true);
             delay(500);
-            digitalWrite(BUZZER_PIN, LOW);
+            setBuzzer(false);
             delay(100);
         }
     }
@@ -2350,9 +2373,9 @@ void handleInitialBeeps() {
 
     // Phát 2 tiếng bíp để xác nhận hoàn tất kiểm tra
     for (int i = 0; i < 2; i++) {
-        digitalWrite(BUZZER_PIN, HIGH);
+        setBuzzer(true);
         delay(200);
-        digitalWrite(BUZZER_PIN, LOW);
+        setBuzzer(false);
         delay(200);
     }
 
@@ -2401,11 +2424,14 @@ void reportSystemStatus() {
 BLYNK_WRITE(VPIN_CONTROL_TEST) {
         int pinValue = param.asInt();
         if (pinValue) {
-            digitalWrite(BUZZER_PIN, HIGH);
+            setBuzzer(true);
             Serial.println("Kiểm tra còi: BẬT");
         } else {
-            digitalWrite(BUZZER_PIN, LOW);
+            setBuzzer(false);
             Serial.println("Kiểm tra còi: TẮT");
+        }
+        if (Blynk.connected() || blynkOverSIM) {
+            Blynk.virtualWrite(VPIN_BUZZER, pinValue);
         }
         updateActivityTime(); // Cập nhật thời gian hoạt động
 
@@ -2434,7 +2460,7 @@ void setup() {
     pinMode(MPU_INT_PIN, INPUT_PULLUP);
 
     // Thiết lập trạng thái ban đầu
-    digitalWrite(BUZZER_PIN, LOW);      // Tắt còi
+    setBuzzer(false);      // Tắt còi
     // Bỏ qua LED (đã vô hiệu hóa)
     digitalWrite(RF_POWER_PIN, HIGH);   // RF bật
     digitalWrite(GPS_POWER_PIN, LOW);   // GPS tắt
@@ -2600,7 +2626,7 @@ void loop() {
                 } else {
                     alarmStage = STAGE_NONE;
                 }
-                digitalWrite(BUZZER_PIN, LOW);  // Tắt còi
+                setBuzzer(false);  // Tắt còi
 
                 // Khôi phục RF nếu có thể
                 rfEnabled = true;
@@ -2648,9 +2674,9 @@ void loop() {
         // Phát âm thanh cảnh báo lỗi mỗi 5 giây
         if (currentMillis % 5000 < 100) {  // Chỉ phát âm thanh mỗi 5 giây một lần, trong 100ms
             for (int i = 0; i < currentError; i++) {
-                digitalWrite(BUZZER_PIN, HIGH);
+                setBuzzer(true);
                 delay(50);
-                digitalWrite(BUZZER_PIN, LOW);
+                setBuzzer(false);
                 delay(50);
                 feedWatchdog();
             }

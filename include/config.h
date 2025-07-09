@@ -64,7 +64,7 @@
 #define VPIN_ALARM_STATE V2
 #define VPIN_MOTION V3
 #define VPIN_CONNECTION V4
-#define VPIN_CONTROL_TEST V5
+#define VPIN_BUZZER V6
 
 // Cấu hình cho hệ thống báo độngƯ
 #define WARNING_BEEP_INTERVAL 500
