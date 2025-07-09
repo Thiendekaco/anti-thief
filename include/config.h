@@ -28,12 +28,7 @@
 #define RESET_RF_CODE 345678     // Mã reset
 
 // Mã SMS
-#define SMS_SOS_CODE "SOS"
-#define SMS_STATUS_CODE "STATUS"
-#define SMS_GPS_CODE "GPS"
 #define SMS_STOP_CODE "STOP"
-#define SMS_SLEEP_CODE "SLEEP"
-#define SMS_WAKE_CODE "WAKE"
 
 // Thông số thời gian
 #define RF_ACTIVE_DURATION 1000     // Thời gian kích hoạt RF (ms)

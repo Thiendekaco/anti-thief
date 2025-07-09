@@ -1775,8 +1775,8 @@ void handleMotionDetection() {
     // Giá trị gia tốc trọng trường (khoảng 9.8 m/s²)
     const float GRAVITY = 9.8;
 
-    // Kiểm tra nếu có chuyển động (độ lớn gia tốc khác nhiều so với trọng trường)
-    if (abs(filteredAccelMagnitude - GRAVITY) > 1.0) {  // Ngưỡng phát hiện chuyển động
+    // Kiểm tra nếu có chuyển động sử dụng giá trị gia tốc thô để phản hồi nhanh hơn
+    if (abs(rawAccelMagnitude - GRAVITY) > ACCEL_THRESHOLD) {
         if (!motionDetected) {
             motionDetected = true;
             motionDetectedTime = millis();
@@ -2588,55 +2588,29 @@ void loop() {
             // Feed watchdog khi nhận được SMS
             feedWatchdog();
 
-            // Xử lý lệnh STATUS
-            if (smsData.indexOf(SMS_STATUS_CODE) >= 0) {
-                // Gửi trạng thái hiện tại
-                String statusMessage = "Trang thai: ";
-                statusMessage += "Pin: " + String(batteryPercentage) + "%, ";
-                statusMessage += "Bao dong: " + String((int)alarmStage) + ", ";
-                statusMessage += "Chu so huu: " + String(ownerPresent ? "Co mat" : "Vang mat") + ", ";
-                statusMessage += "MPU: " + String(mpuSleepState ? "Sleep" : "Active");
-
-                sendSMSWithCooldown(statusMessage.c_str(), SMS_ALERT_SYSTEM_ERROR);
-
-                Serial.println("Đã gửi trạng thái qua SMS");
-            }
-                // Xử lý lệnh STOP
-            else if (smsData.indexOf(SMS_STOP_CODE) >= 0) {
-                // Dừng báo động ở bất kỳ giai đoạn nào, kể cả TRACKING
+            // Chỉ xử lý lệnh STOP
+            if (smsData.indexOf(SMS_STOP_CODE) >= 0) {
+                // Dừng trạng thái theo dõi và quay về cảnh báo nếu đang ở TRACKING
                 previousAlarmStage = alarmStage;
-                alarmStage = STAGE_NONE;
+                if (alarmStage == STAGE_TRACKING) {
+                    alarmStage = STAGE_WARNING;
+                } else {
+                    alarmStage = STAGE_NONE;
+                }
                 digitalWrite(BUZZER_PIN, LOW);  // Tắt còi
 
-                // Khôi phục lại RF nếu có thể
+                // Khôi phục RF nếu có thể
                 rfEnabled = true;
                 powerOnRF();
 
-                // Điều chỉnh timer về trạng thái bình thường
-                adjustTimersForAlarm(STAGE_NONE);
+                // Điều chỉnh timer cho trạng thái mới
+                adjustTimersForAlarm(alarmStage);
 
                 // Phản hồi rằng đã dừng báo động
                 sendSMSWithCooldown("Da dung bao dong va che do theo doi theo yeu cau.", SMS_ALERT_ALARM);
 
                 Serial.println("Đã dừng tất cả trạng thái báo động theo yêu cầu SMS");
             }
-                // Xử lý lệnh RESET - Reset các module bị treo
-            else if (smsData.indexOf("RESET") >= 0) {
-                sendSMSWithCooldown("Dang thuc hien reset he thong...", SMS_ALERT_MODULE_RESET);
-                delay(1000);
-
-                // Reset các biến đếm số lần reset
-                wifiResetCount = 0;
-                simResetCount = 0;
-                gpsResetCount = 0;
-
-                // Reset tất cả timer
-                resetAllTimers();
-
-                // Thực hiện reset phần cứng
-                performHardwareReset();
-            }
-            // Các lệnh khác đã bị loại bỏ theo yêu cầu
         }
     }
 
