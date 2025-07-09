@@ -1428,6 +1428,8 @@ void setup4GConnection() {
     if (response.indexOf("CONNECT OK") >= 0 || response.indexOf("CONNECTED") >= 0) {
         blynkOverSIM = true;
         Serial.println("Kết nối TCP đến server Blynk thành công");
+        // Kết nối phiên Blynk và đẩy dữ liệu ngay
+        Blynk.connect();
         if (Blynk.connected()) {
             Blynk.virtualWrite(VPIN_CONNECTION, 2); // 2 = 4G
             updateBlynkData();
@@ -1655,6 +1657,7 @@ void checkWifiConnection() {
 
             if (Blynk.connected()) {
                 Blynk.virtualWrite(VPIN_CONNECTION, 1); // 1 = WiFi
+                updateBlynkData();
             }
 
             updateActivityTime(); // Cập nhật thời gian hoạt động

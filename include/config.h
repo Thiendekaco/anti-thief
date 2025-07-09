@@ -44,7 +44,7 @@
 // Thời gian bỏ qua phát hiện chuyển động sau khi khởi động hoặc thức dậy (ms)
 #define MOTION_WARMUP_DURATION 5000
 // Ngưỡng cảnh báo
-#define ACCEL_THRESHOLD 0.3        // Ngưỡng gia tốc để phát hiện chuyển động (m/s²)
+#define ACCEL_THRESHOLD 1        // Ngưỡng gia tốc để phát hiện chuyển động (m/s²)
 #define DISTANCE_THRESHOLD 10.0    // Ngưỡng khoảng cách để phát hiện di chuyển (mét)
 
 // Thông tin Blynk và WiFi
